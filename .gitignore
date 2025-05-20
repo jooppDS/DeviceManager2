@@ -271,3 +271,6 @@ appsettings.Development.json
 .vs/
 .env
 secrets.json
+
+./idea/
+./vscode/
