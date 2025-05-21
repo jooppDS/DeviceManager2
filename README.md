@@ -17,14 +17,8 @@ Create a file named `appsettings.json` in the API project root with the followin
   }
 }
 ```
-**Do NOT commit your real connection string to version control!**
+
 
 ## Project Structure Explanation
 
-_Explain here why you chose to split (or not split) your code into several projects._
-
-## Running the Application
-
-1. Restore NuGet packages: `dotnet restore`
-2. Update `appsettings.json` with your connection string.
-3. Build and run the API: `dotnet run --project DeviceManager.API` 
+The solution is split into three projects (API, Lib, Data) to enable reusability in potential future solutions. This structure also simplifies future deployments. Additionally, the project becomes more scalable. Modularity and dependency isolation are considered good programming practices.
