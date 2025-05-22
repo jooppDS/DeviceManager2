@@ -11,9 +11,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="6a542502-fd85-463f-a50d-00cca49c34d5" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/src/DeviceManager.Lib/Models/MasterContext.cs" beforeDir="false" />
-    </list>
+    <list default="true" id="6a542502-fd85-463f-a50d-00cca49c34d5" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -144,7 +142,7 @@
       <workItem from="1747650736373" duration="732000" />
       <workItem from="1747651559804" duration="11174000" />
       <workItem from="1747909272764" duration="178000" />
-      <workItem from="1747909939610" duration="188000" />
+      <workItem from="1747909939610" duration="488000" />
     </task>
     <servers />
   </component>
