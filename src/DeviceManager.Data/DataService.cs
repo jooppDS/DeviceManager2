@@ -1,216 +1,241 @@
-﻿using DeviceManager.Lib.Models;
-using Microsoft.Data.SqlClient;
-using System.Text.Json;
+﻿using System.Text.Json;
+using DeviceManager.Data;
+using DeviceManager.Lib.Data;
+using DeviceManager.Lib.Models;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using DbContext = DeviceManager.Lib.Data.DbContext;
 
-namespace DeviceManager.Data;
+
 
 public class DataService : IDataService
 {
-    private readonly string _connectionString;
+    private readonly DbContext _context;
 
-    public DataService(string connectionString)
+    public DataService(String connectionString)
     {
-        _connectionString = connectionString;
+        var optionsBuilder = new DbContextOptionsBuilder<DbContext>();
+        optionsBuilder.UseSqlServer(connectionString);
+        _context = new DbContext(optionsBuilder.Options);
     }
 
-    // Device operations
     public async Task<List<Device>> GetAllDevicesAsync()
     {
-        var devices = new List<Device>();
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
-        
-        var command = new SqlCommand(@"
-            SELECT Id, Name
-            FROM Device", connection);
-        
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            devices.Add(new Device
-            {
-                Id = reader.GetInt32(0),
-                Name = reader.GetString(1)
-            });
-        }
-        return devices;
+        return await _context.Devices
+            .Include(d => d.DeviceType)
+            .ToListAsync();
     }
 
     public async Task<Device?> GetDeviceByIdAsync(int id)
     {
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
-        
-        var command = new SqlCommand(@"
-            SELECT 
-                d.Id,
-                d.Name,
-                dt.Name as DeviceTypeName,
-                d.IsEnabled,
-                d.AdditionalProperties,
-                e.Id as EmployeeId,
-                p.FirstName,
-                p.LastName
-            FROM Device d
-            LEFT JOIN DeviceType dt ON d.DeviceTypeId = dt.Id
-            LEFT JOIN (
-                SELECT de.DeviceId, de.EmployeeId
-                FROM DeviceEmployee de
-                WHERE de.DeviceId = @Id
-                AND de.IssueDate = (
-                    SELECT MAX(IssueDate)
-                    FROM DeviceEmployee
-                    WHERE DeviceId = de.DeviceId
-                )
-            ) latest_de ON d.Id = latest_de.DeviceId
-            LEFT JOIN Employee e ON latest_de.EmployeeId = e.Id
-            LEFT JOIN Person p ON e.PersonId = p.Id
-            WHERE d.Id = @Id", connection);
-        
-        command.Parameters.AddWithValue("@Id", id);
-        
-        await using var reader = await command.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
+        var device = await _context.Devices
+            .Include(d => d.DeviceType)
+            .FirstOrDefaultAsync(d => d.Id == id);
+
+        if (device == null) return null;
+
+        var latestDeviceEmployee = await _context.DeviceEmployees
+            .Where(de => de.DeviceId == id)
+            .OrderByDescending(de => de.IssueDate)
+            .FirstOrDefaultAsync();
+
+        if (latestDeviceEmployee != null)
         {
-            var additionalProperties = reader.IsDBNull(4) ? "{}" : reader.GetString(4);
-            var employeeId = reader.IsDBNull(5) ? null : (int?)reader.GetInt32(5);
-            var firstName = reader.IsDBNull(6) ? null : reader.GetString(6);
-            var lastName = reader.IsDBNull(7) ? null : reader.GetString(7);
+            var employee = await _context.Employees
+                .Include(e => e.Person)
+                .FirstOrDefaultAsync(e => e.Id == latestDeviceEmployee.EmployeeId);
 
-            var device = new Device
+            if (employee != null)
             {
-                Id = reader.GetInt32(0),
-                Name = reader.GetString(1),
-                DeviceType = new DeviceType { Name = reader.GetString(2) },
-                IsEnabled = reader.GetBoolean(3),
-                AdditionalProperties = additionalProperties
-            };
+                var additionalProps = string.IsNullOrEmpty(device.AdditionalProperties)
+                    ? new Dictionary<string, object>()
+                    : JsonSerializer.Deserialize<Dictionary<string, object>>(device.AdditionalProperties);
 
-            // Store current employee info in AdditionalProperties
-            var additionalProps = JsonSerializer.Deserialize<Dictionary<string, object>>(additionalProperties);
-            if (employeeId.HasValue)
-            {
                 additionalProps["currentEmployee"] = new
                 {
-                    id = employeeId.Value,
-                    firstName,
-                    lastName
+                    id = employee.Id,
+                    firstName = employee.Person.FirstName,
+                    lastName = employee.Person.LastName
                 };
-            }
-            device.AdditionalProperties = JsonSerializer.Serialize(additionalProps);
 
-            return device;
+                device.AdditionalProperties = JsonSerializer.Serialize(additionalProps);
+            }
         }
-        return null;
+
+        return device;
     }
 
     public async Task<Device> AddDeviceAsync(Device device)
     {
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
-        var command = new SqlCommand(@"
-            INSERT INTO Device (Name, IsEnabled, AdditionalProperties, DeviceTypeId)
-            OUTPUT INSERTED.Id
-            VALUES (@Name, @IsEnabled, @AdditionalProperties, (SELECT Id FROM DeviceType WHERE Name = @DeviceTypeName))", connection);
-        command.Parameters.AddWithValue("@Name", device.Name);
-        command.Parameters.AddWithValue("@IsEnabled", device.IsEnabled);
-        command.Parameters.AddWithValue("@AdditionalProperties", device.AdditionalProperties ?? "{}");
-        command.Parameters.AddWithValue("@DeviceTypeName", device.DeviceType?.Name ?? (object)DBNull.Value);
-        var newId = (int)await command.ExecuteScalarAsync();
-        device.Id = newId;
+        if (device.DeviceType != null)
+        {
+            device.DeviceTypeId = await _context.DeviceTypes
+                .Where(dt => dt.Name == device.DeviceType.Name)
+                .Select(dt => (int?)dt.Id)
+                .FirstOrDefaultAsync();
+        }
+
+        _context.Devices.Add(device);
+        await _context.SaveChangesAsync();
         return device;
+    }
+
+    public async Task<List<Account>> GetAllAccountsAsync()
+    {
+        return await _context.Accounts.ToListAsync();
+    }
+
+    public async Task<Account?> GetAccountByIdAsync(int id)
+    {
+            return await _context.Accounts.FirstOrDefaultAsync(a => a.Id == id);
+    }
+
+    public async Task<Account> AddAccountAsync(Account account)
+    {
+        // Validate username uniqueness
+        var existingAccount = await _context.Accounts
+            .FirstOrDefaultAsync(a => a.Username == account.Username);
+        if (existingAccount != null)
+            throw new InvalidOperationException("Username already exists.");
+
+        // Validate employee exists
+        var employee = await _context.Employees
+            .FirstOrDefaultAsync(e => e.Id == account.EmployeeId);
+        if (employee == null)
+            throw new InvalidOperationException("Employee not found.");
+
+        // Validate role exists
+        var role = await _context.Roles
+            .FirstOrDefaultAsync(r => r.Id == account.RoleId);
+        if (role == null)
+            throw new InvalidOperationException("Role not found.");
+
+        _context.Accounts.Add(account);
+        await _context.SaveChangesAsync();
+        return account;
+    }
+
+    public async Task<Account?> AuthAsync(Account account, CancellationToken cancellationToken)
+    {
+        var foundAccount = await _context.Accounts.Include(u => u.Role).FirstOrDefaultAsync(u => String.Equals(u.Username, account.Username), cancellationToken);
+        
+        if (foundAccount == null) return foundAccount;
+
+        var hasher = new PasswordHasher<Account>();
+        
+        var hashedPassword = hasher.VerifyHashedPassword(foundAccount, foundAccount.Password, account.Password);
+        
+        if(hashedPassword == PasswordVerificationResult.Success)
+            return foundAccount;
+        
+        return null;
     }
 
     public async Task<bool> UpdateDeviceAsync(Device device)
     {
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
-        var command = new SqlCommand(@"
-            UPDATE Device
-            SET Name = @Name, IsEnabled = @IsEnabled, AdditionalProperties = @AdditionalProperties, DeviceTypeId = (SELECT Id FROM DeviceType WHERE Name = @DeviceTypeName)
-            WHERE Id = @Id", connection);
-        command.Parameters.AddWithValue("@Id", device.Id);
-        command.Parameters.AddWithValue("@Name", device.Name);
-        command.Parameters.AddWithValue("@IsEnabled", device.IsEnabled);
-        command.Parameters.AddWithValue("@AdditionalProperties", device.AdditionalProperties ?? "{}");
-        command.Parameters.AddWithValue("@DeviceTypeName", device.DeviceType?.Name ?? (object)DBNull.Value);
-        var rows = await command.ExecuteNonQueryAsync();
-        return rows > 0;
+        var existingDevice = await _context.Devices.FindAsync(device.Id);
+        if (existingDevice == null) return false;
+
+        existingDevice.Name = device.Name;
+        existingDevice.IsEnabled = device.IsEnabled;
+        existingDevice.AdditionalProperties = device.AdditionalProperties;
+
+        if (device.DeviceType != null)
+        {
+            existingDevice.DeviceTypeId = await _context.DeviceTypes
+                .Where(dt => dt.Name == device.DeviceType.Name)
+                .Select(dt => (int?)dt.Id)
+                .FirstOrDefaultAsync();
+        }
+
+        await _context.SaveChangesAsync();
+        return true;
+    }
+    
+    
+    public async Task<bool> UpdateAccountAsync(Account account)
+    {
+        var existingAccount = await _context.Accounts.FindAsync(account.Id);
+        if (existingAccount == null)
+            return false;
+
+        // Validate username uniqueness if changed
+        if (existingAccount.Username != account.Username)
+        {
+            var usernameExists = await _context.Accounts
+                .AnyAsync(a => a.Username == account.Username);
+            if (usernameExists)
+                throw new InvalidOperationException("Username already exists.");
+        }
+
+        // Validate role exists
+        var roleExists = await _context.Roles
+            .AnyAsync(r => r.Id == account.RoleId);
+        if (!roleExists)
+            throw new InvalidOperationException("Role not found.");
+
+        existingAccount.Username = account.Username;
+        existingAccount.Password = account.Password; // Password should be pre-hashed
+        existingAccount.EmployeeId = account.EmployeeId;
+        existingAccount.RoleId = account.RoleId;
+
+        await _context.SaveChangesAsync();
+        return true;
     }
 
     public async Task<bool> DeleteDeviceAsync(int id)
     {
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
-        var command = new SqlCommand("DELETE FROM Device WHERE Id = @Id", connection);
-        command.Parameters.AddWithValue("@Id", id);
-        var rows = await command.ExecuteNonQueryAsync();
-        return rows > 0;
+        var device = await _context.Devices.FindAsync(id);
+        if (device == null) return false;
+
+        _context.Devices.Remove(device);
+        await _context.SaveChangesAsync();
+        return true;
     }
 
     public async Task<List<Employee>> GetAllEmployeesAsync()
     {
-        var employees = new List<Employee>();
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
-        var command = new SqlCommand(@"
-            SELECT e.Id, p.FirstName, p.LastName
-            FROM Employee e
-            JOIN Person p ON e.PersonId = p.Id", connection);
-        await using var reader = await command.ExecuteReaderAsync();
-        while (await reader.ReadAsync())
-        {
-            employees.Add(new Employee
-            {
-                Id = reader.GetInt32(0),
-                Person = new Person
-                {
-                    FirstName = reader.GetString(1),
-                    LastName = reader.GetString(2)
-                }
-            });
-        }
-        return employees;
+        return await _context.Employees
+            .Include(e => e.Person)
+            .ToListAsync();
     }
 
     public async Task<Employee?> GetEmployeeByIdAsync(int id)
     {
-        await using var connection = new SqlConnection(_connectionString);
-        await connection.OpenAsync();
-        var command = new SqlCommand(@"
-            SELECT e.Id, e.Salary, e.HireDate, p.Id as PersonId, p.FirstName, p.LastName, p.MiddleName, p.PassportNumber, p.PhoneNumber, p.Email, pos.Id as PositionId, pos.Name as PositionName
-            FROM Employee e
-            JOIN Person p ON e.PersonId = p.Id
-            JOIN Position pos ON e.PositionId = pos.Id
-            WHERE e.Id = @Id", connection);
-        command.Parameters.AddWithValue("@Id", id);
-        await using var reader = await command.ExecuteReaderAsync();
-        if (await reader.ReadAsync())
-        {
-            return new Employee
-            {
-                Id = reader.GetInt32(0),
-                Salary = reader.GetDecimal(1),
-                HireDate = reader.GetDateTime(2),
-                Person = new Person
-                {
-                    Id = reader.GetInt32(3),
-                    FirstName = reader.GetString(4),
-                    LastName = reader.GetString(5),
-                    MiddleName = reader.IsDBNull(6) ? null : reader.GetString(6),
-                    PassportNumber = reader.GetString(7),
-                    PhoneNumber = reader.GetString(8),
-                    Email = reader.GetString(9)
-                },
-                Position = new Position
-                {
-                    Id = reader.GetInt32(10),
-                    Name = reader.GetString(11)
-                }
-            };
-        }
-        return null;
+        return await _context.Employees
+            .Include(e => e.Person)
+            .Include(e => e.Position)
+            .FirstOrDefaultAsync(e => e.Id == id);
     }
     
+    
+    public async Task<bool> DeleteAccountAsync(int id)
+    {
+        var account = await _context.Accounts.FindAsync(id);
+        if (account == null) return false;
+
+        _context.Accounts.Remove(account);
+        await _context.SaveChangesAsync();
+        return true;
+    }
+
+    public async Task<Account?> GetAccountByUsernameAsync(string username)
+    {
+        return await _context.Accounts.FirstOrDefaultAsync(a => a.Username == username);
+    }
+
+
+    public async Task<List<Device>> GetAllDevicesByAccount(Account account)
+    {
+        return await _context.Devices
+            .Where(d => d.DeviceEmployees.Any(de => de.EmployeeId == account.EmployeeId))
+            .ToListAsync();
+    }
+    
+    public async Task<List<Device>> GetAllDevicesByAccountAndId(int id,Account account)
+    {
+        return await _context.Devices
+            .Where(d => d.DeviceEmployees.Any(de => de.EmployeeId == account.EmployeeId) && d.Id == id)
+            .ToListAsync();
+    }
 }
- 

@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace DeviceManager.Lib.Models;
 
-public partial class Role
+public partial class gitRole
 {
     public int Id { get; set; }
 

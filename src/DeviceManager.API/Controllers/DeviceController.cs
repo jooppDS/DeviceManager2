@@ -1,9 +1,11 @@
 ﻿using DeviceManager.Data;
 using DeviceManager.Lib.Models;
-using DeviceManager.API.Models;
+using DeviceManager.API.DTOs;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using System.Collections.Generic;
+using DeviceManager.API.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 
 namespace DeviceManager.API.Controllers;
@@ -11,19 +13,17 @@ namespace DeviceManager.API.Controllers;
 
 [Route("api")]
 [ApiController]
-public class DataController : ControllerBase
+public class DeviceController : ControllerBase
 {
     private readonly IDataService _dataService;
     
-    private readonly PasswordHasher<Account> _passwordHasher;
-
-    public DataController(IDataService dataService)
+    public DeviceController(IDataService dataService)
     {
         _dataService = dataService;
-        _passwordHasher = new PasswordHasher<Account>();
     }
 
     // GET: api/devices
+    [Authorize(Roles = "Admin")]
     [HttpGet("devices")]
     public async Task<IActionResult> GetAllDevices()
     {
@@ -40,7 +40,8 @@ public class DataController : ControllerBase
     }
     
     // GET: api/devices/5
-    [HttpGet("devices/{id}")]
+    [Authorize(Roles = "Admin")]
+    [HttpGet("devices/{id:int}")]
     public async Task<IActionResult> GetDevice(int id)
     {
         try
@@ -64,6 +65,7 @@ public class DataController : ControllerBase
     }
 
     // POST: api/devices
+    [Authorize(Roles = "Admin")]
     [HttpPost("devices")]
     public async Task<IActionResult> CreateDevice([FromBody] DeviceRequestDto dto)
     {
@@ -87,57 +89,10 @@ public class DataController : ControllerBase
         }
     }
     
-    [HttpPost("accounts")]
-    public async Task<IActionResult> RegisterAccount([FromBody] AccountPostDto dto) {
-        try
-        {
-            var account = new Account
-            {
-                Username = dto.Username,
-                Password = dto.Password,
-                EmployeeId = dto.EmployeeId,
-                RoleId = 2
-            };
-            
-            account.Password = _passwordHasher.HashPassword(account, account.Password);
-            
-            var createdAccount = await _dataService.AddAccountAsync(account);
-            return CreatedAtAction("GetAccount",new {id = createdAccount.Id}, createdAccount);
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { error = "An unexpected error occurred.", details = ex.Message });
-        }
-        
-    }
-
-
-    [HttpPost("auth")]
-    public async Task<IActionResult> Authentication([FromBody] AuthDto dto)
-    {
-
-        try
-        {
-            
-            var account = new Account()
-            {
-                Username = dto.Username,
-                Password = dto.Password,
-            };
-            if(await _dataService.AuthAsync(account))
-                return Ok(new { message = "Authentication successful." });
-            
-            return Unauthorized(new { message = "Invalid username or password." });
-        }
-        catch (Exception ex)
-        {
-            return StatusCode(500, new { error = "An unexpected error occurred.", details = ex.Message });
-        }
-        
-    }
 
     // PUT: api/devices/5
-    [HttpPut("devices/{id}")]
+    [Authorize(Roles = "Admin")]
+    [HttpPut("devices/{id:int}")]
     public async Task<IActionResult> UpdateDevice(int id, [FromBody] DeviceRequestDto dto)
     {
         try
@@ -164,7 +119,8 @@ public class DataController : ControllerBase
     }
 
     // DELETE: api/devices/5
-    [HttpDelete("devices/{id}")]
+    [Authorize(Roles = "Admin")]
+    [HttpDelete("devices/{id:int}")]
     public async Task<IActionResult> DeleteDevice(int id)
     {
         try
@@ -178,5 +134,57 @@ public class DataController : ControllerBase
         {
             return StatusCode(500, new { error = "An unexpected error occurred.", details = ex.Message });
         }
+    }
+
+    [Authorize(Roles = "Admin,User")]
+    [HttpGet("devices/me")]
+    public async Task<IActionResult> SeeMyDevice() {
+        var username = User.Identity?.Name;
+        if (username == null)
+            return Unauthorized();
+
+        var account = await _dataService.GetAccountByUsernameAsync(username);
+
+        if (account == null)
+            return NotFound();
+        
+        var devices = await _dataService.GetAllDevicesByAccount(account);
+        
+        
+        return Ok(devices);
+    }
+    
+    [Authorize(Roles = "User,Admin")]
+    [HttpPut("devices/me/{id:int}")]
+    public async Task<IActionResult> UpdatePersonalDevice(int id, [FromBody] DeviceRequestDto dto)
+    {
+        var username = User.Identity?.Name;
+        if (username == null)
+            return Unauthorized();
+
+        
+        var account = await _dataService.GetAccountByUsernameAsync(username);
+
+        if (account == null)
+            return NotFound();
+
+        var device = await _dataService.GetAllDevicesByAccountAndId(id,account);
+
+        if (device == null)
+            return Forbid();
+
+        var updatedDevice = new Device
+        {
+            Id = id,
+            Name = dto.Name,
+            DeviceType = new DeviceType { Name = dto.DeviceTypeName },
+            IsEnabled = dto.IsEnabled,
+            AdditionalProperties = dto.AdditionalProperties ?? "{}"
+        };
+        var success = await _dataService.UpdateDeviceAsync(updatedDevice);
+        if (!success)
+            return NotFound(new { error = "Device not found." });
+
+        return Ok(new { message = "Device updated." });
     }
 }
