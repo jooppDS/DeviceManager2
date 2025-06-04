@@ -15,9 +15,9 @@ public partial class Person
 
     public string LastName { get; set; } = null!;
 
-    public string PhoneNumber { get; set; } = null!;
+    public string? PhoneNumber { get; set; }
 
-    public string Email { get; set; } = null!;
+    public string? Email { get; set; }
 
     public virtual ICollection<Employee> Employees { get; set; } = new List<Employee>();
 }

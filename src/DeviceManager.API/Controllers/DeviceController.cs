@@ -4,23 +4,27 @@ using DeviceManager.API.Models;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using System.Collections.Generic;
+using Microsoft.AspNetCore.Identity;
 
 namespace DeviceManager.API.Controllers;
 
 
-[Route("api/devices")]
+[Route("api")]
 [ApiController]
 public class DataController : ControllerBase
 {
     private readonly IDataService _dataService;
+    
+    private readonly PasswordHasher<Account> _passwordHasher;
 
     public DataController(IDataService dataService)
     {
         _dataService = dataService;
+        _passwordHasher = new PasswordHasher<Account>();
     }
 
     // GET: api/devices
-    [HttpGet]
+    [HttpGet("devices")]
     public async Task<IActionResult> GetAllDevices()
     {
         try
@@ -36,7 +40,7 @@ public class DataController : ControllerBase
     }
     
     // GET: api/devices/5
-    [HttpGet("{id}")]
+    [HttpGet("devices/{id}")]
     public async Task<IActionResult> GetDevice(int id)
     {
         try
@@ -60,7 +64,7 @@ public class DataController : ControllerBase
     }
 
     // POST: api/devices
-    [HttpPost]
+    [HttpPost("devices")]
     public async Task<IActionResult> CreateDevice([FromBody] DeviceRequestDto dto)
     {
         try
@@ -82,9 +86,58 @@ public class DataController : ControllerBase
             return StatusCode(500, new { error = "An unexpected error occurred.", details = ex.Message });
         }
     }
+    
+    [HttpPost("accounts")]
+    public async Task<IActionResult> RegisterAccount([FromBody] AccountPostDto dto) {
+        try
+        {
+            var account = new Account
+            {
+                Username = dto.Username,
+                Password = dto.Password,
+                EmployeeId = dto.EmployeeId,
+                RoleId = 2
+            };
+            
+            account.Password = _passwordHasher.HashPassword(account, account.Password);
+            
+            var createdAccount = await _dataService.AddAccountAsync(account);
+            return CreatedAtAction("GetAccount",new {id = createdAccount.Id}, createdAccount);
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = "An unexpected error occurred.", details = ex.Message });
+        }
+        
+    }
+
+
+    [HttpPost("auth")]
+    public async Task<IActionResult> Authentication([FromBody] AuthDto dto)
+    {
+
+        try
+        {
+            
+            var account = new Account()
+            {
+                Username = dto.Username,
+                Password = dto.Password,
+            };
+            if(await _dataService.AuthAsync(account))
+                return Ok(new { message = "Authentication successful." });
+            
+            return Unauthorized(new { message = "Invalid username or password." });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = "An unexpected error occurred.", details = ex.Message });
+        }
+        
+    }
 
     // PUT: api/devices/5
-    [HttpPut("{id}")]
+    [HttpPut("devices/{id}")]
     public async Task<IActionResult> UpdateDevice(int id, [FromBody] DeviceRequestDto dto)
     {
         try
@@ -111,7 +164,7 @@ public class DataController : ControllerBase
     }
 
     // DELETE: api/devices/5
-    [HttpDelete("{id}")]
+    [HttpDelete("devices/{id}")]
     public async Task<IActionResult> DeleteDevice(int id)
     {
         try

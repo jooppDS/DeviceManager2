@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 
-
 namespace DeviceManager.Lib.Models;
 
 public partial class Device
@@ -12,7 +11,7 @@ public partial class Device
 
     public bool IsEnabled { get; set; }
 
-    public string AdditionalProperties { get; set; } = null!;
+    public string? AdditionalProperties { get; set; }
 
     public int? DeviceTypeId { get; set; }
 
